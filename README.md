@@ -269,7 +269,7 @@ python -m ensurepip --upgrade
 3. Deshabilitar temporalmente el antivirus
 
 
-### ATENCION: El proyecto se elaboro sin error con lo siguiente:
+### ⚠️⚠️ ATENCION: El proyecto se elaboro sin error con lo siguiente: ⚠️⚠️
 **Caso de prueba**:
 1. Deberas de instalar primero
    1.1 Python
