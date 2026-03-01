@@ -283,6 +283,12 @@ python -m ensurepip --upgrade
 7. Abre el archivo de **yt_downloader.py** y click derecho **Run Python** -> **Run Python File in terminal**
 8. Y ya te sale lo mismo que **🎯 Uso**
 
+## No olvides siempre actualizar el yt-dlp
+```CMD
+# instalar el yt-dlp
+python -m pip install -U yt-dlp
+```
+
 ## 🚀 Crear acceso directo (opcional)
 
 Para ejecutar fácilmente desde cualquier lugar:

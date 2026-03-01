@@ -108,7 +108,6 @@ def cookie_options() -> Dict[str, Any]:
     for p in candidates:
         if p.exists() and p.stat().st_size > 10:
             return {"cookiefile": str(p)}
-    # Si no hay archivo de cookies, no usar cookies del navegador para evitar errores
     return {}
 
 
@@ -143,42 +142,38 @@ def gather_resolutions(info: Dict[str, Any]) -> List[Dict[str, str]]:
         vo = by_height[h]["video_only"]
 
         if prog:
-            # Calcular tamaño estimado
             filesize = prog.get("filesize") or prog.get("filesize_approx")
             if not filesize and duration > 0:
-                # Estimar tamaño basado en bitrate y duración
                 tbr = prog.get("tbr") or 0
                 if tbr > 0:
-                    filesize = (tbr * 1000 / 8) * duration  # tbr está en kbps
-            
+                    filesize = (tbr * 1000 / 8) * duration
+
             size_str = f"~{human_size(filesize)}" if filesize else ""
             ext = prog.get("ext", "mp4")
             fps = prog.get("fps")
             fps_str = f" {fps}fps" if fps and fps > 30 else ""
-            
+
             label = f"{h}p{fps_str} ({ext}){' ' + size_str if size_str else ''}"
-            selector = prog.get("format_id")
+            # Selector con fallbacks robustos usando la altura conocida
+            selector = f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={h}]+bestaudio/best[height<={h}]/best"
             options.append({"label": label, "selector": selector, "height": str(h)})
         elif vo:
-            # Para video-only, estimar tamaño combinado
             filesize = vo.get("filesize") or vo.get("filesize_approx")
             if not filesize and duration > 0:
                 tbr = vo.get("tbr") or 0
                 if tbr > 0:
-                    # Agregar ~128kbps para audio
                     filesize = ((tbr + 128) * 1000 / 8) * duration
-            
+
             size_str = f"~{human_size(filesize)}" if filesize else ""
             fps = vo.get("fps")
             fps_str = f" {fps}fps" if fps and fps > 30 else ""
-            
+
             label = f"{h}p{fps_str} (video+audio){' ' + size_str if size_str else ''}"
-            selector = f"bestvideo[height<={h}]+bestaudio/best[height<={h}]/best"
+            selector = f"bestvideo[height<={h}][ext=mp4]+bestaudio[ext=m4a]/bestvideo[height<={h}]+bestaudio/best[height<={h}]/best"
             options.append({"label": label, "selector": selector, "height": str(h)})
 
-    # Agregar siempre opciones de fallback
     if not any(opt["height"] == "best" for opt in options):
-        options.append({"label": "Mejor calidad disponible", "selector": "bestvideo+bestaudio/best", "height": "best"})
+        options.append({"label": "Mejor calidad disponible", "selector": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/bestvideo+bestaudio/best", "height": "best"})
 
     return options
 
@@ -198,38 +193,33 @@ def create_progress_hook(download_id: str):
     def progress_hook(d: Dict[str, Any]) -> None:
         if download_id not in downloads_status:
             return
-            
+
         if d.get("status") == "downloading":
-            # Obtener porcentaje - intentar múltiples fuentes
             pct = 0
-            
-            # Primero intentar con downloaded_bytes y total_bytes
             downloaded = d.get("downloaded_bytes", 0)
             total = d.get("total_bytes") or d.get("total_bytes_estimate", 0)
             if downloaded and total and total > 0:
                 pct = (downloaded / total) * 100
             else:
-                # Fallback a _percent_str
                 pct_str = strip_ansi(d.get("_percent_str", "0%"))
                 try:
                     pct = float(pct_str.replace("%", "").strip())
                 except:
                     pct = 0
-            
-            # Limpiar códigos ANSI de speed y eta
+
             speed = strip_ansi(d.get("_speed_str", ""))
             eta = strip_ansi(d.get("_eta_str", ""))
-            
+
             downloads_status[download_id].status = "downloading"
             downloads_status[download_id].progress = round(pct, 1)
             downloads_status[download_id].speed = speed if speed else None
             downloads_status[download_id].eta = eta if eta else None
-            
+
         elif d.get("status") == "finished":
             downloads_status[download_id].status = "processing"
             downloads_status[download_id].progress = 100
             downloads_status[download_id].filename = d.get("filename")
-    
+
     return progress_hook
 
 
@@ -244,9 +234,6 @@ async def health_check():
 @app.post("/api/video-info", response_model=VideoInfo)
 async def get_video_info(request: VideoInfoRequest):
     """Obtiene información del video sin descargarlo"""
-    base_out = ensure_downloads_dir()
-    
-    # NO usar cookies para obtener info - solo opciones básicas
     common_opts: Dict[str, Any] = {
         "noplaylist": True,
         "quiet": True,
@@ -254,10 +241,9 @@ async def get_video_info(request: VideoInfoRequest):
         "no_warnings": True,
         "ignoreerrors": False,
         "extract_flat": False,
-        # No usar formato específico para extraer info
         "format": None,
     }
-    
+
     try:
         with yt_dlp.YoutubeDL(common_opts) as ydl:
             info = ydl.extract_info(request.url, download=False)
@@ -265,21 +251,19 @@ async def get_video_info(request: VideoInfoRequest):
                 raise HTTPException(status_code=400, detail="No se pudo obtener información del video")
     except yt_dlp.utils.DownloadError as e:
         error_msg = str(e)
-        # Limpiar los códigos de color ANSI del mensaje de error
-        import re
         error_msg = re.sub(r'\x1b\[[0-9;]*m', '', error_msg)
         raise HTTPException(status_code=400, detail=f"Error al obtener info: {error_msg}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error inesperado: {str(e)}")
-    
+
     title = info.get("title", "(sin título)")
     duration = info.get("duration")
     dur_str = f"{duration // 60}m {duration % 60}s" if isinstance(duration, int) else "?"
-    
+
     resolutions = gather_resolutions(info)
     if not resolutions:
         resolutions = [{"label": "Automático (best)", "selector": "best", "height": "auto"}]
-    
+
     return VideoInfo(
         title=title,
         duration=duration,
@@ -295,7 +279,7 @@ async def get_video_info(request: VideoInfoRequest):
 async def start_download(request: DownloadRequest, background_tasks: BackgroundTasks):
     """Inicia una descarga en segundo plano"""
     download_id = str(uuid.uuid4())
-    
+
     downloads_status[download_id] = DownloadStatus(
         id=download_id,
         status="pending",
@@ -305,7 +289,7 @@ async def start_download(request: DownloadRequest, background_tasks: BackgroundT
         filename=None,
         error=None
     )
-    
+
     background_tasks.add_task(
         perform_download,
         download_id,
@@ -315,7 +299,7 @@ async def start_download(request: DownloadRequest, background_tasks: BackgroundT
         request.audio_codec,
         request.audio_bitrate
     )
-    
+
     return {"download_id": download_id}
 
 
@@ -329,20 +313,36 @@ async def perform_download(
 ):
     """Ejecuta la descarga en segundo plano"""
     base_out = ensure_downloads_dir()
-    
+
     common_opts: Dict[str, Any] = {
         "noplaylist": True,
         "outtmpl": os.path.join(base_out, "%(title).200B [%(id)s].%(ext)s"),
         "progress_hooks": [create_progress_hook(download_id)],
         **cookie_options(),
+        "http_headers": {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept-Language": "en-US,en;q=0.9",
+        },
+        "extractor_args": {
+            "youtube": {
+                # android evita muchos errores 403 en streams
+                "player_client": ["android", "web"],
+            }
+        },
+        "retries": 5,
+        "fragment_retries": 5,
     }
-    
+
     try:
         if download_type == "video":
             ydl_opts = {
                 **common_opts,
                 "merge_output_format": "mp4",
+                # ✅ CORREGIDO: ya no usa la variable `h` inexistente
+                # format_selector ya viene con fallbacks desde gather_resolutions
                 "format": format_selector,
+                "format_sort": ["res", "ext:mp4:m4a"],
+                "ignoreerrors": False,
             }
         else:  # audio
             ydl_opts = {
@@ -356,11 +356,10 @@ async def perform_download(
                     }
                 ],
             }
-        
-        # Ejecutar la descarga en un thread separado
+
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, lambda: download_with_ytdlp(ydl_opts, url, download_id))
-        
+
     except Exception as e:
         downloads_status[download_id].status = "error"
         downloads_status[download_id].error = str(e)
@@ -394,7 +393,7 @@ async def list_downloads():
     """Lista todos los archivos descargados"""
     downloads_dir = ensure_downloads_dir()
     files = []
-    
+
     for f in Path(downloads_dir).iterdir():
         if f.is_file() and not f.name.endswith('.part'):
             stat = f.stat()
@@ -404,8 +403,7 @@ async def list_downloads():
                 "size_bytes": stat.st_size,
                 "modified": datetime.fromtimestamp(stat.st_mtime).isoformat(),
             })
-    
-    # Ordenar por fecha de modificación (más recientes primero)
+
     files.sort(key=lambda x: x["modified"], reverse=True)
     return files
 
@@ -415,10 +413,10 @@ async def download_file(filename: str):
     """Descarga un archivo específico"""
     downloads_dir = ensure_downloads_dir()
     file_path = Path(downloads_dir) / filename
-    
+
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Archivo no encontrado")
-    
+
     return FileResponse(
         path=str(file_path),
         filename=filename,

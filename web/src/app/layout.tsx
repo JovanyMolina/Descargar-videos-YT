@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import Navbar from "@/components/Navbar";
+import ChunkErrorHandler from "@/components/ChunkErrorHandler";
 
 const inter = Inter({ subsets: ["latin"] });
 
@@ -19,6 +20,7 @@ export default function RootLayout({
   return (
     <html lang="es">
       <body className={`${inter.className} bg-youtube-dark text-white`}>
+        <ChunkErrorHandler />
         <Navbar />
         <main className="container mx-auto px-4 py-8">{children}</main>
       </body>
